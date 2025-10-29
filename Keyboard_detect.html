@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Page de vérification — examen</title>
+<style>
+  :root{--bg:#fff;--red:rgba(255,0,0,0.92);--muted:#555}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;margin:0;padding:32px;text-align:center;background:var(--bg);color:var(--muted)}
+  header{max-width:900px;margin:0 auto}
+  h1{color:#900;margin-bottom:6px}
+  p.lead{font-size:1.05rem;margin-top:0}
+  #warning{
+    position:fixed;top:40%;left:50%;transform:translate(-50%,-50%);
+    background:var(--red);color:#fff;font-size:1.6rem;font-weight:700;padding:26px 34px;border-radius:14px;
+    z-index:2147483647;display:none;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,0.35)
+  }
+  #counter{
+    position:fixed;bottom:12px;left:12px;background:rgba(0,0,0,0.6);color:#fff;padding:8px 10px;border-radius:8px;
+    z-index:2147483647;font-size:0.95rem;display:none
+  }
+  .note{margin-top:18px;font-size:0.9rem;color:#666}
+  .actions{margin-top:22px}
+  .btn{
+    display:inline-block;padding:10px 14px;border-radius:8px;background:#036; color:#fff;text-decoration:none;font-weight:600;
+    box-shadow:0 4px 12px rgba(3,6,12,0.12)
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Examen — page de vérification</h1>
+    <p class="lead">Ouvre cette page **avant** de lancer ton quiz Brightspace et garde-la visible pendant toute l’épreuve.</p>
+    <div class="note">⚠️ Si vous appuyez sur une touche du clavier, une alerte rouge s’affichera ici — cela sera visible sur l’enregistrement de la session Teams.</div>
+
+    <div class="actions">
+      <a class="btn" href="#" id="selftest">Tester maintenant (cliquez puis appuyez sur une touche)</a>
+    </div>
+
+    <p class="note">Si vous êtes sur mobile/tablette, gardez la page ouverte et partagez l'écran complet.</p>
+  </header>
+
+  <div id="warning">⚠️ Clavier détecté — utilisation interdite pendant l’épreuve</div>
+  <div id="counter">Touches détectées : 0</div>
+
+<script>
+(function(){
+  const warning = document.getElementById('warning');
+  const counter = document.getElementById('counter');
+  let hits = 0, hideTimer = null;
+  const IGNORED = new Set(['Shift','Tab','Meta','Control','Alt','CapsLock','NumLock','ScrollLock']);
+
+  function showOnce(){
+    warning.style.display = 'block';
+    counter.style.display = 'block';
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(()=> { warning.style.display = 'none'; }, 3000);
+  }
+
+  window.addEventListener('keydown', function(e){
+    if (IGNORED.has(e.key)) return;
+    hits++;
+    counter.textContent = 'Touches détectées : ' + hits;
+    showOnce();
+  }, true);
+
+  // bouton test pour l'étudiant
+  document.getElementById('selftest').addEventListener('click', function(e){
+    e.preventDefault();
+    alert('Test : appuyez sur une touche (par ex. "a") pour voir l’alerte. L’alerte disparaît au bout de 3s.');
+  });
+
+  // petit hint : expose compteur (usage debug)
+  window.__examGuard = {getHits:()=>hits, reset:()=>{hits=0;counter.textContent='Touches détectées : 0'}};
+})();
+</script>
+</body>
+</html>
