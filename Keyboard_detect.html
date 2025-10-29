@@ -1,62 +1,81 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fr">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Page de vérification — examen</title>
+<title>Examen sécurisé — viewer PDF + détection clavier</title>
 <style>
-  :root{--bg:#fff;--red:rgba(255,0,0,0.92);--muted:#555}
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;margin:0;padding:32px;text-align:center;background:var(--bg);color:var(--muted)}
-  header{max-width:900px;margin:0 auto}
-  h1{color:#900;margin-bottom:6px}
-  p.lead{font-size:1.05rem;margin-top:0}
-  #warning{
-    position:fixed;top:40%;left:50%;transform:translate(-50%,-50%);
-    background:var(--red);color:#fff;font-size:1.6rem;font-weight:700;padding:26px 34px;border-radius:14px;
-    z-index:2147483647;display:none;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,0.35)
-  }
-  #counter{
-    position:fixed;bottom:12px;left:12px;background:rgba(0,0,0,0.6);color:#fff;padding:8px 10px;border-radius:8px;
-    z-index:2147483647;font-size:0.95rem;display:none
-  }
-  .note{margin-top:18px;font-size:0.9rem;color:#666}
-  .actions{margin-top:22px}
-  .btn{
-    display:inline-block;padding:10px 14px;border-radius:8px;background:#036; color:#fff;text-decoration:none;font-weight:600;
-    box-shadow:0 4px 12px rgba(3,6,12,0.12)
-  }
+  body{font-family:system-ui,Arial; margin:16px; color:#222}
+  #notice{margin-bottom:12px}
+  #warning{position:fixed;top:36%;left:50%;transform:translate(-50%,-50%);background:rgba(255,0,0,0.92);color:#fff;padding:20px 28px;border-radius:12px;z-index:2147483647;display:none;font-weight:700}
+  #counter{position:fixed;left:12px;bottom:12px;background:rgba(0,0,0,0.6);color:#fff;padding:8px;border-radius:8px;z-index:2147483647;display:none}
+  #viewerWrap{display:flex;flex-direction:column;align-items:center;gap:8px}
+  #pdf-canvas{border:1px solid #ddd; max-width:100%; height:auto}
+  #controls{margin:10px 0}
+  @media print{ body * { display:none !important } }
+  .hidden{display:none}
+  input, button { font-size:1rem; padding:8px; border-radius:6px }
 </style>
 </head>
 <body>
-  <header>
-    <h1>Examen — page de vérification</h1>
-    <p class="lead">Ouvre cette page **avant** de lancer ton quiz Brightspace et garde-la visible pendant toute l’épreuve.</p>
-    <div class="note">⚠️ Si vous appuyez sur une touche du clavier, une alerte rouge s’affichera ici — cela sera visible sur l’enregistrement de la session Teams.</div>
+  <h1>Examen — vérification & accès</h1>
+  <p id="notice">Avant d'ouvrir l'examen, saisissez le code fourni par l'enseignant.</p>
 
-    <div class="actions">
-      <a class="btn" href="#" id="selftest">Tester maintenant (cliquez puis appuyez sur une touche)</a>
+  <div>
+    <input id="code" placeholder="Entrez le code (ex : 256ef6)" />
+    <button id="unlockBtn">Ouvrir l'examen</button>
+  </div>
+
+  <div id="viewerWrap" class="hidden">
+    <div id="controls">
+      <button id="prev">◀ Précédent</button>
+      <button id="next">Suivant ▶</button>
+      <span id="pageInfo"></span>
     </div>
-
-    <p class="note">Si vous êtes sur mobile/tablette, gardez la page ouverte et partagez l'écran complet.</p>
-  </header>
+    <canvas id="pdf-canvas"></canvas>
+  </div>
 
   <div id="warning">⚠️ Clavier détecté — utilisation interdite pendant l’épreuve</div>
   <div id="counter">Touches détectées : 0</div>
 
+  <!-- PDF.js from CDN (stable) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.15.349/pdf.min.js"></script>
+
 <script>
-(function(){
-  const warning = document.getElementById('warning');
-  const counter = document.getElementById('counter');
-  let hits = 0, hideTimer = null;
+(async function(){
+  // CONFIG
+  const CORRECT_CODE = '256ef6'; // change si besoin
+  const PDF_URL = 'https://gujer1.github.io/exam-guard/sample.pdf'; // <-- remplacer par ton PDF
   const IGNORED = new Set(['Shift','Tab','Meta','Control','Alt','CapsLock','NumLock','ScrollLock']);
 
-  function showOnce(){
+  // UI
+  const codeInput = document.getElementById('code');
+  const unlockBtn = document.getElementById('unlockBtn');
+  const viewerWrap = document.getElementById('viewerWrap');
+  const canvas = document.getElementById('pdf-canvas');
+  const ctx = canvas.getContext('2d');
+  const prevBtn = document.getElementById('prev');
+  const nextBtn = document.getElementById('next');
+  const pageInfo = document.getElementById('pageInfo');
+  const warning = document.getElementById('warning');
+  const counter = document.getElementById('counter');
+
+  let pdfDoc = null;
+  let currentPage = 1;
+  let pageRendering = false;
+  let pageNumPending = null;
+  let scale = 1.2;
+  let hits = 0, hideTimer = null;
+
+  // show warning + counter
+  function showOnce() {
     warning.style.display = 'block';
     counter.style.display = 'block';
     clearTimeout(hideTimer);
     hideTimer = setTimeout(()=> { warning.style.display = 'none'; }, 3000);
   }
 
+  // Keyboard detection (global)
   window.addEventListener('keydown', function(e){
     if (IGNORED.has(e.key)) return;
     hits++;
@@ -64,14 +83,133 @@
     showOnce();
   }, true);
 
-  // bouton test pour l'étudiant
-  document.getElementById('selftest').addEventListener('click', function(e){
-    e.preventDefault();
-    alert('Test : appuyez sur une touche (par ex. "a") pour voir l’alerte. L’alerte disparaît au bout de 3s.');
+  // block print/save shortcuts and copy
+  window.addEventListener('keydown', function(e){
+    if((e.ctrlKey||e.metaKey) && (e.key === 'p' || e.key === 's' || e.key === 'c')) {
+      e.preventDefault();
+      alert('Impression / sauvegarde / copie désactivée pendant l\'épreuve.');
+    }
+  }, true);
+
+  // contextmenu disable on canvas area
+  document.addEventListener('contextmenu', e => { if(e.target === canvas) e.preventDefault(); });
+
+  // PDF.js worker config (uses CDN worker)
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.15.349/pdf.worker.min.js';
+
+  // load PDF
+  async function loadPdf(url) {
+    pdfDoc = await pdfjsLib.getDocument(url).promise;
+    viewerWrap.classList.remove('hidden');
+    renderPage(currentPage);
+  }
+
+  function renderPage(num) {
+    pageRendering = true;
+    pdfDoc.getPage(num).then(function(page) {
+      const viewport = page.getViewport({ scale: scale });
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      // render PDF page into canvas
+      const renderContext = {
+        canvasContext: ctx,
+        viewport: viewport
+      };
+      const renderTask = page.render(renderContext);
+      renderTask.promise.then(function() {
+        // overlay watermark (session, user, timestamp)
+        drawWatermark();
+        pageRendering = false;
+        if (pageNumPending !== null) {
+          renderPage(pageNumPending);
+          pageNumPending = null;
+        }
+      });
+    });
+
+    // update page info
+    pageInfo.textContent = 'Page ' + num + ' / ' + pdfDoc.numPages;
+  }
+
+  function queueRenderPage(num) {
+    if (pageRendering) pageNumPending = num;
+    else renderPage(num);
+  }
+
+  prevBtn.addEventListener('click', function(){ if(currentPage <= 1) return; currentPage--; queueRenderPage(currentPage); });
+  nextBtn.addEventListener('click', function(){ if(currentPage >= pdfDoc.numPages) return; currentPage++; queueRenderPage(currentPage); });
+
+  // watermark drawing function: tiled text + timestamp
+  function drawWatermark(){
+    const name = localStorage.getItem('exam_name') || 'ETUDIANT';
+    const sessionId = localStorage.getItem('exam_session') || (Math.random().toString(36).slice(2,8).toUpperCase());
+    localStorage.setItem('exam_session', sessionId);
+    // tiled watermark parameters
+    const txt = `${name} • ${sessionId} • ${new Date().toLocaleString()}`;
+    const tileW = 280;
+    const tileH = 120;
+    // create small canvas for tile
+    const tile = document.createElement('canvas');
+    tile.width = tileW; tile.height = tileH;
+    const tctx = tile.getContext('2d');
+    tctx.clearRect(0,0,tileW,tileH);
+    tctx.globalAlpha = 0.15;
+    tctx.fillStyle = '#900';
+    tctx.font = '16px system-ui';
+    tctx.translate(tileW/2, tileH/2);
+    tctx.rotate(-22 * Math.PI / 180);
+    tctx.textAlign = 'center';
+    tctx.fillText(txt, 0, 0);
+    tctx.font = '12px system-ui';
+    tctx.fillText(new Date().toLocaleTimeString(), 0, 28);
+    // draw pattern across main canvas
+    const pattern = ctx.createPattern(tile, 'repeat');
+    ctx.save();
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.restore();
+    // draw small bottom-right label
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.fillRect(canvas.width - 260, canvas.height - 36, 250, 28);
+    ctx.fillStyle = '#900';
+    ctx.font = '12px system-ui';
+    ctx.fillText(`Session ${sessionId} — ${name} — ${new Date().toLocaleTimeString()}`, canvas.width - 130, canvas.height - 17);
+  }
+
+  // periodically update timestamp overlay every second
+  setInterval(() => { if(pdfDoc) { drawWatermark(); } }, 1000);
+
+  // unlock button handler
+  unlockBtn.addEventListener('click', async function(){
+    const code = (codeInput.value || '').trim();
+    if(!code) return alert('Entrez le code fourni.');
+    if(code !== CORRECT_CODE) return alert('Code invalide.');
+    // optional: ask name
+    let name = localStorage.getItem('exam_name');
+    if(!name){
+      name = prompt('Entrez votre nom (pour watermark) :') || 'ETUDIANT';
+      localStorage.setItem('exam_name', name);
+    }
+    try {
+      unlockBtn.disabled = true;
+      unlockBtn.textContent = 'Chargement...';
+      await loadPdf(PDF_URL);
+      unlockBtn.style.display = 'none';
+      codeInput.style.display = 'none';
+    } catch(err) {
+      alert('Erreur chargement PDF: ' + err.message);
+      unlockBtn.disabled = false;
+      unlockBtn.textContent = 'Ouvrir l\'examen';
+    }
   });
 
-  // petit hint : expose compteur (usage debug)
-  window.__examGuard = {getHits:()=>hits, reset:()=>{hits=0;counter.textContent='Touches détectées : 0'}};
+  // small helpful: disable selection/copy on canvas
+  canvas.addEventListener('mousedown', function(e){ e.preventDefault(); }, false);
+
+  // expose for debug
+  window.__examGuard = { getHits: () => hits, reset: () => { hits = 0; counter.textContent = 'Touches détectées : 0'; } };
+
 })();
 </script>
 </body>
